@@ -1,0 +1,14 @@
+{
+  "name": "system-design-learning-project",
+  "version": "1.0.0",
+  "description": "System Design Integrated Hands-On Project (Lessons 01 - 05)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1",
+    "mysql2": "^3.9.7"
+  }
+}

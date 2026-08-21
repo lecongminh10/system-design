@@ -1,0 +1,165 @@
+services:
+  # =======================================================
+  # LESSON 04 & 05: DATABASE REPLICATION & SCALING LAYER
+  # =======================================================
+  mysql-master:
+    image: mysql:8.0
+    container_name: mysql-master
+    hostname: mysql-master
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: shop_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql/master/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+      - ./mysql/init/01-init-master.sql:/docker-entrypoint-initdb.d/01-init-master.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mysql-replica:
+    image: mysql:8.0
+    container_name: mysql-replica
+    hostname: mysql-replica
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql/replica/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Automatic Replication Stream Setup
+  mysql-setup-replication:
+    image: mysql:8.0
+    container_name: mysql-setup-replication
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+      mysql-replica:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: >
+      /bin/sh -c "
+        echo 'Configuring GTID Replication from mysql-replica -> mysql-master...';
+        mysql -h mysql-replica -u root -proot_password -e \"
+          STOP REPLICA;
+          RESET REPLICA ALL;
+          CHANGE REPLICATION SOURCE TO
+            SOURCE_HOST='mysql-master',
+            SOURCE_PORT=3306,
+            SOURCE_USER='repl_user',
+            SOURCE_PASSWORD='repl_password',
+            SOURCE_AUTO_POSITION=1,
+            GET_SOURCE_PUBLIC_KEY=1;
+          START REPLICA;
+          SHOW REPLICA STATUS\\G
+        \"
+        echo 'Replication setup completed successfully!';
+      "
+
+  # =======================================================
+  # LESSON 03: IN-MEMORY CACHING LAYER (REDIS)
+  # =======================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    restart: always
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # =======================================================
+  # APP CLUSTER INSTANCES (3 INSTANCES FOR LB DEMO)
+  # =======================================================
+  app-1:
+    build: ./app
+    container_name: app-1
+    restart: always
+    environment:
+      PORT: 3000
+      INSTANCE_NAME: app-1
+      DB_MASTER_HOST: mysql-master
+      DB_REPLICA_HOST: mysql-replica
+      DB_USER: app_user
+      DB_PASSWORD: app_password
+      DB_NAME: shop_db
+      REDIS_HOST: redis
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  app-2:
+    build: ./app
+    container_name: app-2
+    restart: always
+    environment:
+      PORT: 3000
+      INSTANCE_NAME: app-2
+      DB_MASTER_HOST: mysql-master
+      DB_REPLICA_HOST: mysql-replica
+      DB_USER: app_user
+      DB_PASSWORD: app_password
+      DB_NAME: shop_db
+      REDIS_HOST: redis
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  app-3:
+    build: ./app
+    container_name: app-3
+    restart: always
+    environment:
+      PORT: 3000
+      INSTANCE_NAME: app-3
+      DB_MASTER_HOST: mysql-master
+      DB_REPLICA_HOST: mysql-replica
+      DB_USER: app_user
+      DB_PASSWORD: app_password
+      DB_NAME: shop_db
+      REDIS_HOST: redis
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # =======================================================
+  # LESSON 01 & 02: REVERSE PROXY & LOAD BALANCER LAYER
+  # =======================================================
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx-lb
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d/app.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app-1
+      - app-2
+      - app-3
